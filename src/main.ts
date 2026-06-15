@@ -10,6 +10,7 @@ const MAX_ZOOM = 80;
 const RANGE_SETTING_MIN = -5;
 const RANGE_SETTING_MAX = 5;
 const NORMALIZATION_TARGET_MAX = 5;
+const MINI_SUM_HISTORY_POINTS = 160;
 
 type NormalizationMode = "none" | "sum" | "l1" | "l2";
 
@@ -53,9 +54,19 @@ type GpuStateResources = {
   renderB: GPUBindGroup;
 };
 
+type SumSample = {
+  step: number;
+  value: number;
+};
+
+type RandomState = {
+  values: Float32Array<ArrayBuffer>;
+  sum: number;
+};
+
 const visibleStartFilter: Float32Array<ArrayBuffer> = new Float32Array([
   0.0, 0.03, 0.0,
-  -0.03, 0.995, 0.03,
+  -0.03, 1.0, 0.03,
   0.0, -0.03, 0.0,
 ]);
 const DISPLAY_FILTER_INDEXES = [8, 7, 6, 5, 4, 3, 2, 1, 0] as const;
@@ -65,10 +76,19 @@ const canvas = queryRequired<HTMLCanvasElement>("#automata-canvas");
 const errorPanel = queryRequired<HTMLDivElement>("#error-panel");
 const stepsInput = queryRequired<HTMLInputElement>("#steps-input");
 const stepsOutput = queryRequired<HTMLOutputElement>("#steps-output");
+const fpsOutput = queryRequired<HTMLOutputElement>("#fps-output");
 const settingsButton = queryRequired<HTMLButtonElement>("#settings-button");
 const settingsPanel = queryRequired<HTMLElement>("#settings-panel");
 const toolbarShell = queryRequired<HTMLElement>(".toolbar-shell");
+const sumGraphButton = queryRequired<HTMLButtonElement>("#sum-graph-button");
+const sumSparklineCanvas = queryRequired<HTMLCanvasElement>("#sum-sparkline-canvas");
+const sumGraphPanel = queryRequired<HTMLElement>("#sum-graph-panel");
+const sumGraphCanvas = queryRequired<HTMLCanvasElement>("#sum-graph-canvas");
+const sumGraphCurrent = queryRequired<HTMLOutputElement>("#sum-graph-current");
+const sumGraphCloseButton = queryRequired<HTMLButtonElement>("#sum-graph-close-button");
 const randomizeButton = queryRequired<HTMLButtonElement>("#randomize-button");
+const settingsRandomizeButton = queryRequired<HTMLButtonElement>("#settings-randomize-button");
+const randomizeStateButton = queryRequired<HTMLButtonElement>("#randomize-state-button");
 const pauseButton = queryRequired<HTMLButtonElement>("#pause-button");
 const verticalSymmetryInput = queryRequired<HTMLInputElement>("#vertical-symmetry-input");
 const horizontalSymmetryInput = queryRequired<HTMLInputElement>("#horizontal-symmetry-input");
@@ -106,6 +126,14 @@ function showError(message: string): void {
 
 function formatValue(value: number, decimals: number): string {
   return value.toFixed(decimals);
+}
+
+function formatStepScale(exponent: number): string {
+  const scale = 2 ** exponent;
+  const formattedScale = scale >= 1
+    ? Math.round(scale).toLocaleString()
+    : scale.toFixed(Math.abs(exponent));
+  return `2^${exponent} (${formattedScale})`;
 }
 
 function createValueCell(
@@ -217,12 +245,15 @@ function createValueCell(
   return { element, set };
 }
 
-function randomState(cellCount: number): Float32Array<ArrayBuffer> {
+function randomState(cellCount: number): RandomState {
   const values = new Float32Array(cellCount);
+  let sum = 0;
   for (let i = 0; i < values.length; i += 1) {
-    values[i] = Math.random() * 2 - 1;
+    const value = Math.random() * 2 - 1;
+    values[i] = value;
+    sum += value;
   }
-  return values;
+  return { values, sum };
 }
 
 function zeroState(cellCount: number): Float32Array<ArrayBuffer> {
@@ -379,16 +410,194 @@ function applyNormalization(
 
 function randomFilter(settings: SymmetrySettings): Float32Array<ArrayBuffer> {
   const { min, max } = normalizedRange(settings);
-  const displayValues = new Array<number>(9).fill(0);
 
-  for (const group of getSymmetryGroups(settings)) {
-    const value = min + Math.random() * (max - min);
-    for (const index of group.indexes) {
-      displayValues[index] = value;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const displayValues = new Array<number>(9).fill(0);
+
+    for (const group of getSymmetryGroups(settings)) {
+      const value = min + Math.random() * (max - min);
+      for (const index of group.indexes) {
+        displayValues[index] = value;
+      }
+    }
+
+    const values = displayValuesToFilter(displayValues);
+    if (settings.normalization !== "sum" || Math.abs(filterMetric(values, "sum")) >= 0.000001) {
+      return applyNormalization(values, settings);
     }
   }
 
-  return applyNormalization(displayValuesToFilter(displayValues), settings);
+  const fallbackDisplayValues = new Array<number>(9).fill(0);
+  fallbackDisplayValues[4] = settings.normalizationMagnitude;
+  return displayValuesToFilter(fallbackDisplayValues);
+}
+
+function formatSumValue(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+
+  const absValue = Math.abs(value);
+  if (absValue >= 1_000_000 || (absValue > 0 && absValue < 0.01)) {
+    return value.toExponential(2);
+  }
+
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: absValue >= 100 ? 0 : 2,
+  });
+}
+
+function resizeGraphCanvas(canvas: HTMLCanvasElement): { width: number; height: number } {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const rect = canvas.getBoundingClientRect();
+  const cssWidth = Math.max(1, rect.width || canvas.width / dpr);
+  const cssHeight = Math.max(1, rect.height || canvas.height / dpr);
+  const width = Math.floor(cssWidth * dpr);
+  const height = Math.floor(cssHeight * dpr);
+
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  return { width: cssWidth, height: cssHeight };
+}
+
+function drawSumGraph(
+  canvas: HTMLCanvasElement,
+  samples: SumSample[],
+  options: { compact: boolean },
+): void {
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+
+  const { width, height } = resizeGraphCanvas(canvas);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, width, height);
+
+  const finiteSamples = samples.filter((sample) => Number.isFinite(sample.value));
+  const values = finiteSamples.map((sample) => sample.value);
+
+  if (values.length === 0) {
+    context.strokeStyle = "rgba(244, 242, 240, 0.18)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(0, height * 0.5);
+    context.lineTo(width, height * 0.5);
+    context.stroke();
+    return;
+  }
+
+  let min = values[0] ?? 0;
+  let max = values[0] ?? 0;
+  for (const value of values) {
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+  }
+  if (Math.abs(max - min) < 0.000001) {
+    const padding = Math.max(1, Math.abs(max) * 0.1);
+    min -= padding;
+    max += padding;
+  }
+
+  const padLeft = options.compact ? 3 : 58;
+  const padRight = options.compact ? 3 : 12;
+  const padTop = options.compact ? 4 : 16;
+  const padBottom = options.compact ? 4 : 30;
+  const graphWidth = Math.max(1, width - padLeft - padRight);
+  const graphHeight = Math.max(1, height - padTop - padBottom);
+  const range = max - min;
+
+  function point(index: number, value: number): { x: number; y: number } {
+    const x = padLeft + (values.length === 1 ? graphWidth : (index / (values.length - 1)) * graphWidth);
+    const y = padTop + graphHeight - ((value - min) / range) * graphHeight;
+    return { x, y };
+  }
+
+  if (!options.compact) {
+    context.font = "11px ui-monospace, Menlo, Consolas, monospace";
+    context.fillStyle = "rgba(244, 242, 240, 0.68)";
+    context.strokeStyle = "rgba(244, 242, 240, 0.22)";
+    context.lineWidth = 1;
+
+    const axisBottom = padTop + graphHeight;
+    context.beginPath();
+    context.moveTo(padLeft, padTop);
+    context.lineTo(padLeft, axisBottom);
+    context.lineTo(padLeft + graphWidth, axisBottom);
+    context.stroke();
+
+    const yTicks = [
+      { value: max, y: padTop },
+      { value: (min + max) * 0.5, y: padTop + graphHeight * 0.5 },
+      { value: min, y: axisBottom },
+    ];
+    context.textAlign = "right";
+    context.textBaseline = "middle";
+    for (const tick of yTicks) {
+      context.fillText(formatSumValue(tick.value), padLeft - 7, tick.y);
+    }
+
+    const firstStep = finiteSamples[0]?.step ?? 0;
+    const lastStep = finiteSamples[finiteSamples.length - 1]?.step ?? firstStep;
+    context.textAlign = "left";
+    context.textBaseline = "top";
+    context.fillText(`step ${firstStep}`, padLeft + 4, padTop + 4);
+    context.textAlign = "center";
+    context.fillText("x: step", padLeft + graphWidth * 0.5, padTop + 4);
+    context.textAlign = "right";
+    context.fillText(`step ${lastStep}`, padLeft + graphWidth - 4, padTop + 4);
+
+    context.textAlign = "left";
+    context.textBaseline = "bottom";
+    context.fillText(`step ${firstStep}`, padLeft, height - 6);
+    context.textAlign = "center";
+    context.fillText("step", padLeft + graphWidth * 0.5, height - 6);
+    context.textAlign = "right";
+    context.fillText(`step ${lastStep}`, padLeft + graphWidth, height - 6);
+  }
+
+  if (!options.compact && min < 0 && max > 0) {
+    const zeroY = padTop + graphHeight - ((0 - min) / range) * graphHeight;
+    context.strokeStyle = "rgba(244, 242, 240, 0.16)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(padLeft, zeroY);
+    context.lineTo(padLeft + graphWidth, zeroY);
+    context.stroke();
+  }
+
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.lineWidth = options.compact ? 1.5 : 2;
+  context.strokeStyle = "#e4f222";
+  context.beginPath();
+  if (values.length === 1) {
+    const { y } = point(0, values[0] ?? 0);
+    context.moveTo(padLeft, y);
+    context.lineTo(padLeft + graphWidth, y);
+  } else {
+    values.forEach((value, index) => {
+      const { x, y } = point(index, value);
+      if (index === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    });
+  }
+  context.stroke();
+
+  if (!options.compact) {
+    const latest = point(values.length - 1, values[values.length - 1] ?? 0);
+    context.fillStyle = "#e4f222";
+    context.beginPath();
+    context.arc(latest.x, latest.y, 3.5, 0, Math.PI * 2);
+    context.fill();
+  }
 }
 
 async function init(): Promise<void> {
@@ -473,11 +682,14 @@ async function init(): Promise<void> {
   let workgroupCount = Math.ceil(gridSize / WORKGROUP_SIZE);
   let currentState = 0;
   let paused = false;
-  let stepsPerFrame = Number(stepsInput.value);
+  let stepExponent = Number(stepsInput.value);
+  let stepsPerFrame = 2 ** stepExponent;
+  let stepAccumulator = 0;
   let randomizeMinValue = -1;
   let randomizeMaxValue = 1;
   let normalizationMagnitude = 1;
   let filterValues: Float32Array<ArrayBuffer> = new Float32Array(visibleStartFilter);
+  let targetGridSum = 0;
 
   const view: Viewport = {
     centerX: gridSize * 0.5,
@@ -486,6 +698,11 @@ async function init(): Promise<void> {
   };
   const renderUniformValues = new Float32Array(8);
   const settingsFilterCells: ValueCellController[] = [];
+  const sumHistory: SumSample[] = [];
+  let graphOpen = false;
+  let lastFrameTime = 0;
+  let smoothedFps = 0;
+  let lastFpsRenderTime = 0;
   const gridWidthValueCell = createValueCell("Grid width", resizeGrid, 0);
   const gridHeightValueCell = createValueCell("Grid height", resizeGrid, 0);
   const minCell = createValueCell("Randomize minimum", (value) => {
@@ -569,6 +786,10 @@ async function init(): Promise<void> {
 
   function writeComputeParams(): void {
     device.queue.writeBuffer(computeParamsBuffer, 0, new Uint32Array([gridSize, 0, 0, 0]));
+  }
+
+  function writeTargetSum(value: number): void {
+    targetGridSum = Number.isFinite(value) ? value : 0;
   }
 
   function readRandomizeSettings(): SymmetrySettings {
@@ -705,8 +926,10 @@ async function init(): Promise<void> {
   }
 
   function writeRandomState(): void {
-    device.queue.writeBuffer(resources.stateA, 0, randomState(cellCount));
+    const nextState = randomState(cellCount);
+    device.queue.writeBuffer(resources.stateA, 0, nextState.values);
     device.queue.writeBuffer(resources.stateB, 0, zeroState(cellCount));
+    writeTargetSum(nextState.sum);
     currentState = 0;
   }
 
@@ -727,6 +950,7 @@ async function init(): Promise<void> {
     resources = createGpuStateResources(gridSize);
     writeComputeParams();
     writeRandomState();
+    resetSumHistory();
     destroyGpuStateResources(oldResources);
     clampViewport();
     syncControlCells();
@@ -768,7 +992,8 @@ async function init(): Promise<void> {
     pauseButton.innerHTML = paused
       ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>`
       : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7z"></path><path d="M13 5h4v14h-4z"></path></svg>`;
-    stepsOutput.value = `${stepsPerFrame}`;
+    sumGraphCloseButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5.1 5.1 6.4 10.7 12l-5.6 5.6 1.3 1.3 5.6-5.6 5.6 5.6 1.3-1.3-5.6-5.6 5.6-5.6-1.3-1.3-5.6 5.6z"></path></svg>`;
+    stepsOutput.value = formatStepScale(stepExponent);
   }
 
   function setSettingsOpen(isOpen: boolean): void {
@@ -779,17 +1004,66 @@ async function init(): Promise<void> {
     }
   }
 
+  function setGraphOpen(isOpen: boolean): void {
+    graphOpen = isOpen;
+    sumGraphPanel.hidden = !isOpen;
+    sumGraphButton.setAttribute("aria-expanded", `${isOpen}`);
+    if (isOpen) {
+      setSettingsOpen(false);
+    }
+    drawSumGraphs();
+  }
+
   function togglePaused(): void {
     paused = !paused;
     updateControls();
   }
 
+  function resetSumHistory(): void {
+    sumHistory.length = 0;
+    stepAccumulator = 0;
+    if (Number.isFinite(targetGridSum)) {
+      sumHistory.push({ step: 0, value: targetGridSum });
+      sumGraphCurrent.value = formatSumValue(targetGridSum);
+      sumGraphButton.setAttribute("aria-label", `Open total sum graph, latest sum ${formatSumValue(targetGridSum)}`);
+    } else {
+      sumGraphCurrent.value = "0";
+      sumGraphButton.setAttribute("aria-label", "Open total sum graph");
+    }
+    drawSumGraphs();
+  }
+
+  function drawSumGraphs(): void {
+    const miniSamples = sumHistory.slice(-MINI_SUM_HISTORY_POINTS);
+    drawSumGraph(sumSparklineCanvas, miniSamples, { compact: true });
+    if (graphOpen) {
+      drawSumGraph(sumGraphCanvas, sumHistory, { compact: false });
+    }
+  }
+
   function randomizeAll(): void {
     writeRandomState();
+    resetSumHistory();
     writeFilter(randomFilter(readRandomizeSettings()));
   }
 
+  function randomizeStateOnly(): void {
+    writeRandomState();
+    resetSumHistory();
+  }
+
   function stepFrame(now: number): void {
+    if (lastFrameTime > 0) {
+      const frameDelta = Math.max(now - lastFrameTime, 0.001);
+      const instantFps = 1000 / frameDelta;
+      smoothedFps = smoothedFps === 0 ? instantFps : smoothedFps * 0.9 + instantFps * 0.1;
+      if (now - lastFpsRenderTime > 250) {
+        fpsOutput.value = `${Math.round(smoothedFps)} fps`;
+        lastFpsRenderTime = now;
+      }
+    }
+    lastFrameTime = now;
+
     configureCanvas();
     clampViewport();
 
@@ -804,16 +1078,23 @@ async function init(): Promise<void> {
     device.queue.writeBuffer(renderUniformBuffer, 0, renderUniformValues);
 
     const encoder = device.createCommandEncoder({ label: "frame command encoder" });
+    let stepsThisFrame = 0;
 
     if (!paused) {
-      const computePass = encoder.beginComputePass({ label: "automata update pass" });
-      computePass.setPipeline(computePipeline);
-      for (let step = 0; step < stepsPerFrame; step += 1) {
-        computePass.setBindGroup(0, currentState === 0 ? resources.computeAB : resources.computeBA);
-        computePass.dispatchWorkgroups(workgroupCount, workgroupCount);
-        currentState = currentState === 0 ? 1 : 0;
+      stepAccumulator += stepsPerFrame;
+      stepsThisFrame = Math.floor(stepAccumulator);
+      stepAccumulator -= stepsThisFrame;
+
+      if (stepsThisFrame > 0) {
+        const computePass = encoder.beginComputePass({ label: "automata update pass" });
+        computePass.setPipeline(computePipeline);
+        for (let step = 0; step < stepsThisFrame; step += 1) {
+          computePass.setBindGroup(0, currentState === 0 ? resources.computeAB : resources.computeBA);
+          computePass.dispatchWorkgroups(workgroupCount, workgroupCount);
+          currentState = currentState === 0 ? 1 : 0;
+        }
+        computePass.end();
       }
-      computePass.end();
     }
 
     const textureView = webgpuContext.getCurrentTexture().createView();
@@ -891,6 +1172,7 @@ async function init(): Promise<void> {
       randomizeAll();
     } else if (event.key === "Escape") {
       setSettingsOpen(false);
+      setGraphOpen(false);
     } else if (event.key === "+" || event.key === "=") {
       view.zoom *= 1.04;
       clampViewport();
@@ -914,7 +1196,21 @@ async function init(): Promise<void> {
 
   settingsButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    setSettingsOpen(settingsPanel.hidden);
+    const willOpen = settingsPanel.hidden;
+    if (willOpen) {
+      setGraphOpen(false);
+    }
+    setSettingsOpen(willOpen);
+  });
+  toolbarShell.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+  sumGraphButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setGraphOpen(sumGraphPanel.hidden);
+  });
+  sumGraphCloseButton.addEventListener("click", () => {
+    setGraphOpen(false);
   });
   document.addEventListener("pointerdown", (event) => {
     const target = event.target;
@@ -925,12 +1221,24 @@ async function init(): Promise<void> {
     ) {
       setSettingsOpen(false);
     }
+    if (
+      target instanceof Node
+      && !toolbarShell.contains(target)
+      && !sumGraphPanel.contains(target)
+    ) {
+      setGraphOpen(false);
+    }
   });
   settingsPanel.addEventListener("pointerdown", (event) => {
     event.stopPropagation();
   });
+  sumGraphPanel.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
   pauseButton.addEventListener("click", togglePaused);
   randomizeButton.addEventListener("click", randomizeAll);
+  settingsRandomizeButton.addEventListener("click", randomizeAll);
+  randomizeStateButton.addEventListener("click", randomizeStateOnly);
   for (const input of [verticalSymmetryInput, horizontalSymmetryInput, fullSymmetryInput]) {
     input.addEventListener("change", applyCurrentSymmetryToFilter);
   }
@@ -938,8 +1246,10 @@ async function init(): Promise<void> {
     input.addEventListener("change", applyCurrentNormalization);
   }
   stepsInput.addEventListener("input", () => {
-    stepsPerFrame = Number(stepsInput.value);
-    stepsOutput.value = `${stepsPerFrame}`;
+    stepExponent = Number(stepsInput.value);
+    stepsPerFrame = 2 ** stepExponent;
+    stepAccumulator = 0;
+    stepsOutput.value = formatStepScale(stepExponent);
   });
 
   gridWidthCell.append(gridWidthValueCell.element);
@@ -958,7 +1268,11 @@ async function init(): Promise<void> {
   }
 
   new ResizeObserver(configureCanvas).observe(canvas);
+  const graphResizeObserver = new ResizeObserver(drawSumGraphs);
+  graphResizeObserver.observe(sumSparklineCanvas);
+  graphResizeObserver.observe(sumGraphCanvas);
   writeRandomState();
+  resetSumHistory();
   writeFilter(filterValues);
   syncControlCells();
   updateControls();

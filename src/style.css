@@ -53,7 +53,7 @@ body {
 
 .toolbar {
   position: absolute;
-  inset: 0 0 auto;
+  inset: auto 0 0;
   z-index: 20;
   padding: 8px;
   border: 0;
@@ -63,11 +63,11 @@ body {
 
 .toolbar-shell {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
   align-items: center;
   min-height: 46px;
-  padding: 5px 10px;
+  padding: 5px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: rgba(42, 40, 39, 0.94);
@@ -78,12 +78,14 @@ body {
 }
 
 .step-control,
-.toolbar-actions {
+.toolbar-actions,
+.toolbar-end {
   display: flex;
   align-items: center;
 }
 
-button {
+button,
+.github-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -99,16 +101,19 @@ button {
   font-weight: 400;
   line-height: 20px;
   cursor: pointer;
+  text-decoration: none;
 }
 
-button:hover {
+button:hover,
+.github-button:hover {
   border-color: var(--border-strong);
   color: var(--foreground);
   background: var(--muted);
   filter: none;
 }
 
-button:active {
+button:active,
+.github-button:active {
   transform: translateY(1px);
 }
 
@@ -142,9 +147,8 @@ button:disabled {
 }
 
 .step-control {
-  justify-self: stretch;
   gap: 10px;
-  width: min(440px, 100%);
+  width: clamp(240px, 28vw, 380px);
   color: var(--muted-foreground);
   font-size: 14px;
   font-weight: 400;
@@ -157,7 +161,7 @@ button:disabled {
 }
 
 .step-control output {
-  width: 28px;
+  width: 118px;
   color: var(--foreground);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -167,7 +171,52 @@ button:disabled {
 .toolbar-actions {
   position: relative;
   gap: 8px;
+  justify-self: start;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.toolbar-actions > * {
+  flex: 0 0 auto;
+}
+
+.toolbar-end {
+  gap: 8px;
   justify-self: end;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.fps-output {
+  width: 54px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sum-sparkline-button {
+  width: 104px;
+  height: 36px;
+  min-height: 36px;
+  overflow: hidden;
+  padding: 0;
+  background: var(--input);
+}
+
+.sum-sparkline-button[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  background: var(--muted);
+}
+
+.sum-sparkline-button canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .icon-button {
@@ -184,10 +233,14 @@ button:disabled {
   fill: currentColor;
 }
 
+.github-button {
+  flex: 0 0 auto;
+}
+
 .settings-panel {
   position: absolute;
-  top: 56px;
   right: 8px;
+  bottom: 64px;
   z-index: 19;
   display: grid;
   gap: 10px;
@@ -204,13 +257,93 @@ button:disabled {
   pointer-events: auto;
 }
 
+.sum-graph-panel {
+  position: absolute;
+  right: 8px;
+  bottom: 64px;
+  z-index: 18;
+  display: grid;
+  gap: 10px;
+  width: min(720px, calc(100% - 16px));
+  max-height: calc(100dvh - 64px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--card);
+  box-shadow:
+    0 22px 48px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(244, 242, 240, 0.05);
+  pointer-events: auto;
+}
+
 .settings-panel[hidden] {
   display: none;
+}
+
+.sum-graph-panel[hidden] {
+  display: none;
+}
+
+.sum-graph-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sum-graph-header h2 {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.sum-graph-header output {
+  display: block;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+#sum-graph-canvas {
+  display: block;
+  width: 100%;
+  height: min(38vh, 300px);
+  min-height: 180px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(244, 242, 240, 0.05);
 }
 
 .settings-section {
   display: grid;
   gap: 7px;
+}
+
+.settings-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 3px;
+}
+
+.settings-actions button {
+  min-height: 38px;
+}
+
+#settings-randomize-button {
+  border-color: rgba(244, 242, 240, 0.3);
+  color: var(--accent-foreground);
+  background:
+    linear-gradient(180deg, var(--accent) 0%, var(--accent-secondary) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 0 0 1px rgba(228, 242, 34, 0.2);
 }
 
 .settings-section h2 {
@@ -426,14 +559,10 @@ canvas:active {
   }
 
   .toolbar-shell {
-    grid-template-columns: 1fr;
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
     min-height: 46px;
-    padding: 5px 10px;
-  }
-
-  .step-control {
-    display: none;
+    padding: 5px;
   }
 
   button {
@@ -441,21 +570,68 @@ canvas:active {
     font-size: 12px;
   }
 
+  .step-control {
+    width: 86px;
+    gap: 0;
+  }
+
+  .step-control span,
+  .step-control input {
+    display: none;
+  }
+
+  .step-control output {
+    width: 86px;
+    font-size: 11px;
+  }
+
   .toolbar-actions {
+    justify-content: start;
+    justify-self: start;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .toolbar-end {
     justify-content: end;
-    justify-self: stretch;
+    justify-self: end;
+    gap: 6px;
+  }
+
+  .fps-output {
+    width: 46px;
+    font-size: 11px;
+  }
+
+  .sum-sparkline-button {
+    width: 58px;
   }
 
   .settings-panel {
     position: absolute;
-    top: 56px;
+    top: 8px;
     right: 8px;
-    bottom: 8px;
+    bottom: 64px;
     left: 8px;
     width: auto;
     max-height: none;
     margin: 0;
     border-radius: 16px;
+  }
+
+  .sum-graph-panel {
+    top: 8px;
+    right: 8px;
+    bottom: 64px;
+    left: 8px;
+    width: auto;
+    max-height: none;
+    border-radius: 16px;
+  }
+
+  #sum-graph-canvas {
+    height: 100%;
+    min-height: 0;
   }
 
   .normalization-row {

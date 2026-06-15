@@ -1,4 +1,4 @@
-# Cells Web
+# AI Sells
 
 WebGPU/Vite port of the Python/Taichi cellular automata prototype.
 
