@@ -239,7 +239,7 @@ button:disabled {
 
 .settings-panel {
   position: absolute;
-  right: 8px;
+  left: 8px;
   bottom: 64px;
   z-index: 19;
   display: grid;
@@ -259,7 +259,7 @@ button:disabled {
 
 .sum-graph-panel {
   position: absolute;
-  right: 8px;
+  left: 8px;
   bottom: 64px;
   z-index: 18;
   display: grid;

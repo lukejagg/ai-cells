@@ -14,6 +14,9 @@ const CURSOR_RADIUS_MAX = 64;
 const DEFAULT_CURSOR_RADIUS = 5;
 const NORMALIZATION_TARGET_MAX = 5;
 const MINI_SUM_HISTORY_POINTS = 160;
+const SUM_SAMPLE_OPEN_INTERVAL_MS = 250;
+const SUM_SAMPLE_IDLE_INTERVAL_MS = 500;
+const SUM_SMOOTHING_WINDOW = 10;
 
 type NormalizationMode = "none" | "sum" | "l1" | "l2";
 type ActivationMode = "identity" | "tanh" | "abs" | "sin" | "inverse-gaussian" | "gaussian";
@@ -519,6 +522,20 @@ function formatSumValue(value: number): string {
   });
 }
 
+function weightedMovingAverage(values: number[], windowSize: number): number[] {
+  return values.map((_, index) => {
+    const start = Math.max(0, index - windowSize + 1);
+    let weightedSum = 0;
+    let weightTotal = 0;
+    for (let sampleIndex = start; sampleIndex <= index; sampleIndex += 1) {
+      const weight = sampleIndex - start + 1;
+      weightedSum += (values[sampleIndex] ?? 0) * weight;
+      weightTotal += weight;
+    }
+    return weightTotal > 0 ? weightedSum / weightTotal : 0;
+  });
+}
+
 function resizeGraphCanvas(canvas: HTMLCanvasElement): { width: number; height: number } {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const rect = canvas.getBoundingClientRect();
@@ -544,6 +561,7 @@ function drawSumGraph(
   if (!context) {
     return;
   }
+  const graphContext = context;
 
   const { width, height } = resizeGraphCanvas(canvas);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -552,6 +570,7 @@ function drawSumGraph(
 
   const finiteSamples = samples.filter((sample) => Number.isFinite(sample.value));
   const values = finiteSamples.map((sample) => sample.value);
+  const smoothedValues = weightedMovingAverage(values, SUM_SMOOTHING_WINDOW);
 
   if (values.length === 0) {
     context.strokeStyle = "rgba(244, 242, 240, 0.18)";
@@ -565,7 +584,7 @@ function drawSumGraph(
 
   let min = values[0] ?? 0;
   let max = values[0] ?? 0;
-  for (const value of values) {
+  for (const value of [...values, ...smoothedValues]) {
     min = Math.min(min, value);
     max = Math.max(max, value);
   }
@@ -583,10 +602,33 @@ function drawSumGraph(
   const graphHeight = Math.max(1, height - padTop - padBottom);
   const range = max - min;
 
-  function point(index: number, value: number): { x: number; y: number } {
-    const x = padLeft + (values.length === 1 ? graphWidth : (index / (values.length - 1)) * graphWidth);
+  function point(index: number, value: number, count = values.length): { x: number; y: number } {
+    const x = padLeft + (count === 1 ? graphWidth : (index / (count - 1)) * graphWidth);
     const y = padTop + graphHeight - ((value - min) / range) * graphHeight;
     return { x, y };
+  }
+
+  function strokeSeries(seriesValues: number[], color: string, lineWidth: number): void {
+    graphContext.lineJoin = "round";
+    graphContext.lineCap = "round";
+    graphContext.lineWidth = lineWidth;
+    graphContext.strokeStyle = color;
+    graphContext.beginPath();
+    if (seriesValues.length === 1) {
+      const { y } = point(0, seriesValues[0] ?? 0, seriesValues.length);
+      graphContext.moveTo(padLeft, y);
+      graphContext.lineTo(padLeft + graphWidth, y);
+    } else {
+      seriesValues.forEach((value, index) => {
+        const { x, y } = point(index, value, seriesValues.length);
+        if (index === 0) {
+          graphContext.moveTo(x, y);
+        } else {
+          graphContext.lineTo(x, y);
+        }
+      });
+    }
+    graphContext.stroke();
   }
 
   if (!options.compact) {
@@ -642,29 +684,11 @@ function drawSumGraph(
     context.stroke();
   }
 
-  context.lineJoin = "round";
-  context.lineCap = "round";
-  context.lineWidth = options.compact ? 1.5 : 2;
-  context.strokeStyle = "#e4f222";
-  context.beginPath();
-  if (values.length === 1) {
-    const { y } = point(0, values[0] ?? 0);
-    context.moveTo(padLeft, y);
-    context.lineTo(padLeft + graphWidth, y);
-  } else {
-    values.forEach((value, index) => {
-      const { x, y } = point(index, value);
-      if (index === 0) {
-        context.moveTo(x, y);
-      } else {
-        context.lineTo(x, y);
-      }
-    });
-  }
-  context.stroke();
+  strokeSeries(values, options.compact ? "rgba(228, 242, 34, 0.24)" : "rgba(228, 242, 34, 0.28)", options.compact ? 1 : 1.5);
+  strokeSeries(smoothedValues, "#e4f222", options.compact ? 1.5 : 2.5);
 
   if (!options.compact) {
-    const latest = point(values.length - 1, values[values.length - 1] ?? 0);
+    const latest = point(smoothedValues.length - 1, smoothedValues[smoothedValues.length - 1] ?? 0);
     context.fillStyle = "#e4f222";
     context.beginPath();
     context.arc(latest.x, latest.y, 3.5, 0, Math.PI * 2);
@@ -777,6 +801,10 @@ async function init(): Promise<void> {
   let lastFrameTime = 0;
   let smoothedFps = 0;
   let lastFpsRenderTime = 0;
+  let totalSteps = 0;
+  let lastSumSampleTime = 0;
+  let sumReadbackInFlight = false;
+  let sumReadbackGeneration = 0;
   const gridWidthValueCell = createValueCell("Grid width", resizeGrid, 0);
   const gridHeightValueCell = createValueCell("Grid height", resizeGrid, 0);
   const minCell = createValueCell("Randomize minimum", (value) => {
@@ -811,12 +839,12 @@ async function init(): Promise<void> {
     const stateA = device.createBuffer({
       label: "state A",
       size: stateBufferSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
     const stateB = device.createBuffer({
       label: "state B",
       size: stateBufferSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
     return {
@@ -881,6 +909,82 @@ async function init(): Promise<void> {
 
   function writeTargetSum(value: number): void {
     targetGridSum = Number.isFinite(value) ? value : 0;
+  }
+
+  function currentStateBuffer(): GPUBuffer {
+    return currentState === 0 ? resources.stateA : resources.stateB;
+  }
+
+  function appendSumSample(value: number): void {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+
+    const previousSample = sumHistory[sumHistory.length - 1];
+    if (
+      previousSample
+      && previousSample.step === totalSteps
+      && Math.abs(previousSample.value - value) < 0.000001
+    ) {
+      return;
+    }
+
+    writeTargetSum(value);
+    sumHistory.push({ step: totalSteps, value });
+    sumGraphCurrent.value = formatSumValue(value);
+    sumGraphButton.setAttribute("aria-label", `Open total sum graph, latest sum ${formatSumValue(value)}`);
+    drawSumGraphs();
+  }
+
+  function scheduleSumReadback(now: number, force = false): void {
+    if (sumReadbackInFlight || cellCount === 0) {
+      return;
+    }
+
+    const interval = graphOpen ? SUM_SAMPLE_OPEN_INTERVAL_MS : SUM_SAMPLE_IDLE_INTERVAL_MS;
+    if (!force && now - lastSumSampleTime < interval) {
+      return;
+    }
+
+    lastSumSampleTime = now;
+    sumReadbackInFlight = true;
+    const generation = sumReadbackGeneration;
+    const sampleCellCount = cellCount;
+    const byteLength = sampleCellCount * Float32Array.BYTES_PER_ELEMENT;
+    const readbackBuffer = device.createBuffer({
+      label: "sum readback",
+      size: byteLength,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const encoder = device.createCommandEncoder({ label: "sum readback encoder" });
+    encoder.copyBufferToBuffer(currentStateBuffer(), 0, readbackBuffer, 0, byteLength);
+    device.queue.submit([encoder.finish()]);
+
+    readbackBuffer
+      .mapAsync(GPUMapMode.READ)
+      .then(() => {
+        if (generation === sumReadbackGeneration) {
+          const values = new Float32Array(readbackBuffer.getMappedRange());
+          let sum = 0;
+          for (let index = 0; index < values.length; index += 1) {
+            const value = values[index] ?? 0;
+            if (Number.isFinite(value)) {
+              sum += value;
+            }
+          }
+          appendSumSample(sum);
+        }
+        readbackBuffer.unmap();
+        readbackBuffer.destroy();
+      })
+      .catch(() => {
+        readbackBuffer.destroy();
+      })
+      .finally(() => {
+        if (generation === sumReadbackGeneration) {
+          sumReadbackInFlight = false;
+        }
+      });
   }
 
   function readRandomizeSettings(): SymmetrySettings {
@@ -1171,6 +1275,7 @@ async function init(): Promise<void> {
   function paintAtClientPoint(clientX: number, clientY: number): void {
     const point = gridPointFromClient(clientX, clientY);
     paintAtGridPoint(point.x, point.y);
+    scheduleSumReadback(performance.now(), true);
   }
 
   function updateControls(): void {
@@ -1206,6 +1311,10 @@ async function init(): Promise<void> {
   }
 
   function resetSumHistory(): void {
+    sumReadbackGeneration += 1;
+    sumReadbackInFlight = false;
+    lastSumSampleTime = 0;
+    totalSteps = 0;
     sumHistory.length = 0;
     stepAccumulator = 0;
     if (Number.isFinite(targetGridSum)) {
@@ -1280,6 +1389,7 @@ async function init(): Promise<void> {
           currentState = currentState === 0 ? 1 : 0;
         }
         computePass.end();
+        totalSteps += stepsThisFrame;
       }
     }
 
@@ -1301,6 +1411,7 @@ async function init(): Promise<void> {
     renderPass.end();
 
     device.queue.submit([encoder.finish()]);
+    scheduleSumReadback(now);
     requestAnimationFrame(stepFrame);
   }
 
@@ -1308,7 +1419,9 @@ async function init(): Promise<void> {
   let previousPointer: { x: number; y: number } | null = null;
 
   canvas.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) {
+    const shouldPan = event.button === 2 || (event.button === 0 && event.shiftKey);
+    const shouldPaint = event.button === 0 && !event.shiftKey;
+    if (!shouldPan && !shouldPaint) {
       return;
     }
 
@@ -1318,7 +1431,7 @@ async function init(): Promise<void> {
     } catch {
       // Synthetic pointer events used in browser checks do not always register an active pointer.
     }
-    if (event.shiftKey) {
+    if (shouldPan) {
       pointerMode = "pan";
       previousPointer = { x: event.clientX, y: event.clientY };
       canvas.classList.add("is-panning");
@@ -1329,6 +1442,10 @@ async function init(): Promise<void> {
     previousPointer = null;
     canvas.classList.add("is-painting");
     paintAtClientPoint(event.clientX, event.clientY);
+  });
+
+  canvas.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
   });
 
   canvas.addEventListener("pointermove", (event) => {
