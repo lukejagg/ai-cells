@@ -73,6 +73,25 @@ type RandomState = {
   sum: number;
 };
 
+type SettingsSnapshot = {
+  gridSize: number;
+  stepExponent: number;
+  randomizeMinValue: number;
+  randomizeMaxValue: number;
+  normalization: NormalizationMode;
+  normalizationMagnitude: number;
+  activation: ActivationMode;
+  colorMode: ColorMode;
+  cursorShape: CursorShape;
+  cursorRadiusValue: number;
+  cursorPaintValue: number;
+  verticalSymmetry: boolean;
+  horizontalSymmetry: boolean;
+  fullSymmetry: boolean;
+  persistentPixels: boolean;
+  filterValues: Float32Array<ArrayBuffer>;
+};
+
 const visibleStartFilter: Float32Array<ArrayBuffer> = new Float32Array([
   0.0, 0.03, 0.0,
   -0.03, 1.0, 0.03,
@@ -352,6 +371,12 @@ function getSelectedColorMode(): ColorMode {
 function getSelectedCursorShape(): CursorShape {
   const selected = cursorShapeInputs.find((input) => input.checked)?.value;
   return selected === "circle" ? "circle" : "box";
+}
+
+function setCheckedRadio(inputs: HTMLInputElement[], value: string): void {
+  for (const input of inputs) {
+    input.checked = input.value === value;
+  }
 }
 
 function getSymmetryGroups(settings: SymmetrySettings): SymmetryGroup[] {
@@ -805,6 +830,7 @@ async function init(): Promise<void> {
   let lastSumSampleTime = 0;
   let sumReadbackInFlight = false;
   let sumReadbackGeneration = 0;
+  const settingsUndoStack: SettingsSnapshot[] = [];
   const gridWidthValueCell = createValueCell("Grid width", resizeGrid, 0);
   const gridHeightValueCell = createValueCell("Grid height", resizeGrid, 0);
   const minCell = createValueCell("Randomize minimum", (value) => {
@@ -905,6 +931,75 @@ async function init(): Promise<void> {
         0,
       ]),
     );
+  }
+
+  function captureSettingsSnapshot(): SettingsSnapshot {
+    return {
+      gridSize,
+      stepExponent,
+      randomizeMinValue,
+      randomizeMaxValue,
+      normalization: getSelectedNormalization(),
+      normalizationMagnitude,
+      activation: getSelectedActivation(),
+      colorMode: getSelectedColorMode(),
+      cursorShape: getSelectedCursorShape(),
+      cursorRadiusValue,
+      cursorPaintValue,
+      verticalSymmetry: verticalSymmetryInput.checked,
+      horizontalSymmetry: horizontalSymmetryInput.checked,
+      fullSymmetry: fullSymmetryInput.checked,
+      persistentPixels: persistentPixelsInput.checked,
+      filterValues: new Float32Array(filterValues),
+    };
+  }
+
+  function pushSettingsUndoSnapshot(): void {
+    settingsUndoStack.push(captureSettingsSnapshot());
+    if (settingsUndoStack.length > 100) {
+      settingsUndoStack.shift();
+    }
+  }
+
+  function restoreSettingsSnapshot(snapshot: SettingsSnapshot): void {
+    randomizeMinValue = snapshot.randomizeMinValue;
+    randomizeMaxValue = snapshot.randomizeMaxValue;
+    normalizationMagnitude = snapshot.normalizationMagnitude;
+    cursorRadiusValue = snapshot.cursorRadiusValue;
+    cursorPaintValue = snapshot.cursorPaintValue;
+
+    verticalSymmetryInput.checked = snapshot.verticalSymmetry;
+    horizontalSymmetryInput.checked = snapshot.horizontalSymmetry;
+    fullSymmetryInput.checked = snapshot.fullSymmetry;
+    persistentPixelsInput.checked = snapshot.persistentPixels;
+    setCheckedRadio(normalizationInputs, snapshot.normalization);
+    setCheckedRadio(activationInputs, snapshot.activation);
+    setCheckedRadio(colorModeInputs, snapshot.colorMode);
+    setCheckedRadio(cursorShapeInputs, snapshot.cursorShape);
+
+    stepExponent = snapshot.stepExponent;
+    stepsPerFrame = 2 ** stepExponent;
+    stepAccumulator = 0;
+    stepsInput.value = `${stepExponent}`;
+    stepsOutput.value = formatStepScale(stepExponent);
+
+    if (snapshot.gridSize !== gridSize) {
+      resizeGrid(snapshot.gridSize);
+    }
+
+    writeComputeParams();
+    writeFilter(new Float32Array(snapshot.filterValues));
+    syncControlCells();
+  }
+
+  function undoSettingsSnapshot(): boolean {
+    const snapshot = settingsUndoStack.pop();
+    if (!snapshot) {
+      return false;
+    }
+
+    restoreSettingsSnapshot(snapshot);
+    return true;
   }
 
   function writeTargetSum(value: number): void {
@@ -1337,6 +1432,7 @@ async function init(): Promise<void> {
   }
 
   function randomizeAll(): void {
+    pushSettingsUndoSnapshot();
     writeRandomState();
     resetSumHistory();
     writeFilter(randomFilter(readRandomizeSettings()));
@@ -1497,6 +1593,13 @@ async function init(): Promise<void> {
   );
 
   window.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
+      if (undoSettingsSnapshot()) {
+        event.preventDefault();
+      }
+      return;
+    }
+
     const panAmount = 4 / view.zoom;
     if (event.key === " ") {
       event.preventDefault();
