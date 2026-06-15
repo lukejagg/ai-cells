@@ -1,8 +1,8 @@
 export const computeShader = /* wgsl */ `
 struct ComputeParams {
   grid_size: u32,
-  pad0: u32,
-  pad1: u32,
+  activation_mode: u32,
+  persistent: u32,
   pad2: u32,
 };
 
@@ -16,17 +16,53 @@ fn wrap_index(value: i32) -> u32 {
   return u32((value % size + size) % size);
 }
 
-fn activation(value: f32) -> f32 {
+fn finite_value(value: f32) -> f32 {
   if (!(value >= -1.0e20 && value <= 1.0e20)) {
     return 0.0;
   }
   return value;
 }
 
+fn stable_tanh(value: f32) -> f32 {
+  let limited = clamp(value, -20.0, 20.0);
+  let e = exp(2.0 * limited);
+  return (e - 1.0) / (e + 1.0);
+}
+
+fn activation(value: f32) -> f32 {
+  let x = finite_value(value);
+  if (params.activation_mode == 1u) {
+    return stable_tanh(x);
+  }
+  if (params.activation_mode == 2u) {
+    return abs(x);
+  }
+  if (params.activation_mode == 3u) {
+    return sin(x);
+  }
+  if (params.activation_mode == 4u) {
+    return 1.0 - (1.0 / (0.9 * x * x + 1.0));
+  }
+  if (params.activation_mode == 5u) {
+    let centered = x - 3.5;
+    return 1.0 / pow(2.0, centered * centered);
+  }
+  return x;
+}
+
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= params.grid_size || gid.y >= params.grid_size) {
     return;
+  }
+
+  let state_index = gid.y * params.grid_size + gid.x;
+  if (params.persistent != 0u) {
+    let current = finite_value(src[state_index]);
+    if (abs(current) > 0.000001) {
+      dst[state_index] = current;
+      return;
+    }
   }
 
   var acc = 0.0;
@@ -40,7 +76,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
   }
 
-  dst[gid.y * params.grid_size + gid.x] = activation(acc);
+  dst[state_index] = finite_value(activation(acc));
 }
 `;
 
@@ -51,7 +87,7 @@ struct RenderParams {
   zoom: f32,
   frame: f32,
   grid_size: f32,
-  padding: f32,
+  color_mode: f32,
 };
 
 struct VertexOut {
@@ -102,6 +138,11 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
   let grid_y = wrap_index(i32(floor(sample_y)));
   let value = state[grid_y * u32(params.grid_size) + grid_x];
   let magnitude = finite_magnitude(value);
+
+  if (params.color_mode >= 0.5) {
+    let foreground = vec3<f32>(1.0, 0.917647, 0.0);
+    return vec4<f32>(foreground * magnitude, 1.0);
+  }
 
   if (value >= 0.0) {
     return vec4<f32>(magnitude, magnitude * 0.88, 0.08, 1.0);

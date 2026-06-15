@@ -9,10 +9,16 @@ const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 80;
 const RANGE_SETTING_MIN = -5;
 const RANGE_SETTING_MAX = 5;
+const CURSOR_RADIUS_MIN = 1;
+const CURSOR_RADIUS_MAX = 64;
+const DEFAULT_CURSOR_RADIUS = 5;
 const NORMALIZATION_TARGET_MAX = 5;
 const MINI_SUM_HISTORY_POINTS = 160;
 
 type NormalizationMode = "none" | "sum" | "l1" | "l2";
+type ActivationMode = "identity" | "tanh" | "abs" | "sin" | "inverse-gaussian" | "gaussian";
+type ColorMode = "signed" | "foreground";
+type CursorShape = "box" | "circle";
 
 type Viewport = {
   centerX: number;
@@ -89,15 +95,29 @@ const sumGraphCloseButton = queryRequired<HTMLButtonElement>("#sum-graph-close-b
 const randomizeButton = queryRequired<HTMLButtonElement>("#randomize-button");
 const settingsRandomizeButton = queryRequired<HTMLButtonElement>("#settings-randomize-button");
 const randomizeStateButton = queryRequired<HTMLButtonElement>("#randomize-state-button");
+const fillZerosButton = queryRequired<HTMLButtonElement>("#fill-zeros-button");
+const fillOnesButton = queryRequired<HTMLButtonElement>("#fill-ones-button");
 const pauseButton = queryRequired<HTMLButtonElement>("#pause-button");
 const verticalSymmetryInput = queryRequired<HTMLInputElement>("#vertical-symmetry-input");
 const horizontalSymmetryInput = queryRequired<HTMLInputElement>("#horizontal-symmetry-input");
 const fullSymmetryInput = queryRequired<HTMLInputElement>("#full-symmetry-input");
+const persistentPixelsInput = queryRequired<HTMLInputElement>("#persistent-pixels-input");
 const normalizationInputs = Array.from(
   document.querySelectorAll<HTMLInputElement>('input[name="normalization"]'),
 );
+const activationInputs = Array.from(
+  document.querySelectorAll<HTMLInputElement>('input[name="activation"]'),
+);
+const colorModeInputs = Array.from(
+  document.querySelectorAll<HTMLInputElement>('input[name="color-mode"]'),
+);
+const cursorShapeInputs = Array.from(
+  document.querySelectorAll<HTMLInputElement>('input[name="cursor-shape"]'),
+);
 const gridWidthCell = queryRequired<HTMLElement>("#grid-width-cell");
 const gridHeightCell = queryRequired<HTMLElement>("#grid-height-cell");
+const cursorRadiusCell = queryRequired<HTMLElement>("#cursor-radius-cell");
+const cursorValueCell = queryRequired<HTMLElement>("#cursor-value-cell");
 const randomizeMinCell = queryRequired<HTMLElement>("#randomize-min-cell");
 const randomizeMaxCell = queryRequired<HTMLElement>("#randomize-max-cell");
 const normalizationMagnitudeCell = queryRequired<HTMLElement>("#normalization-magnitude-cell");
@@ -260,6 +280,14 @@ function zeroState(cellCount: number): Float32Array<ArrayBuffer> {
   return new Float32Array(cellCount);
 }
 
+function uniformState(cellCount: number, value: number): Float32Array<ArrayBuffer> {
+  const values = new Float32Array(cellCount);
+  if (value !== 0) {
+    values.fill(value);
+  }
+  return values;
+}
+
 function displayIndex(row: number, column: number): number {
   return row * 3 + column;
 }
@@ -277,6 +305,50 @@ function getSelectedNormalization(): NormalizationMode {
     return selected;
   }
   return "none";
+}
+
+function getSelectedActivation(): ActivationMode {
+  const selected = activationInputs.find((input) => input.checked)?.value;
+  if (
+    selected === "identity"
+    || selected === "tanh"
+    || selected === "abs"
+    || selected === "sin"
+    || selected === "inverse-gaussian"
+    || selected === "gaussian"
+  ) {
+    return selected;
+  }
+  return "tanh";
+}
+
+function activationModeIndex(mode: ActivationMode): number {
+  if (mode === "tanh") {
+    return 1;
+  }
+  if (mode === "abs") {
+    return 2;
+  }
+  if (mode === "sin") {
+    return 3;
+  }
+  if (mode === "inverse-gaussian") {
+    return 4;
+  }
+  if (mode === "gaussian") {
+    return 5;
+  }
+  return 0;
+}
+
+function getSelectedColorMode(): ColorMode {
+  const selected = colorModeInputs.find((input) => input.checked)?.value;
+  return selected === "foreground" ? "foreground" : "signed";
+}
+
+function getSelectedCursorShape(): CursorShape {
+  const selected = cursorShapeInputs.find((input) => input.checked)?.value;
+  return selected === "circle" ? "circle" : "box";
 }
 
 function getSymmetryGroups(settings: SymmetrySettings): SymmetryGroup[] {
@@ -688,6 +760,8 @@ async function init(): Promise<void> {
   let randomizeMinValue = -1;
   let randomizeMaxValue = 1;
   let normalizationMagnitude = 1;
+  let cursorRadiusValue = DEFAULT_CURSOR_RADIUS;
+  let cursorPaintValue = 1;
   let filterValues: Float32Array<ArrayBuffer> = new Float32Array(visibleStartFilter);
   let targetGridSum = 0;
 
@@ -719,6 +793,14 @@ async function init(): Promise<void> {
       ? clamp(value, -NORMALIZATION_TARGET_MAX, NORMALIZATION_TARGET_MAX)
       : clamp(value, 0, NORMALIZATION_TARGET_MAX);
     applyCurrentNormalization();
+  });
+  const cursorRadiusValueCell = createValueCell("Cursor radius", (value) => {
+    cursorRadiusValue = Math.round(clamp(value, CURSOR_RADIUS_MIN, CURSOR_RADIUS_MAX));
+    syncControlCells();
+  }, 0);
+  const cursorPaintValueCell = createValueCell("Cursor value", (value) => {
+    cursorPaintValue = clamp(value, -1, 1);
+    syncControlCells();
   });
 
   let resources = createGpuStateResources(gridSize);
@@ -785,7 +867,16 @@ async function init(): Promise<void> {
   }
 
   function writeComputeParams(): void {
-    device.queue.writeBuffer(computeParamsBuffer, 0, new Uint32Array([gridSize, 0, 0, 0]));
+    device.queue.writeBuffer(
+      computeParamsBuffer,
+      0,
+      new Uint32Array([
+        gridSize,
+        activationModeIndex(getSelectedActivation()),
+        persistentPixelsInput.checked ? 1 : 0,
+        0,
+      ]),
+    );
   }
 
   function writeTargetSum(value: number): void {
@@ -840,6 +931,16 @@ async function init(): Promise<void> {
       value: randomizeMaxValue,
       min: randomizeMinValue,
       max: RANGE_SETTING_MAX,
+    });
+    cursorRadiusValueCell.set({
+      value: cursorRadiusValue,
+      min: CURSOR_RADIUS_MIN,
+      max: CURSOR_RADIUS_MAX,
+    });
+    cursorPaintValueCell.set({
+      value: cursorPaintValue,
+      min: -1,
+      max: 1,
     });
     syncNormalizationCell();
     syncFilterCells();
@@ -933,6 +1034,16 @@ async function init(): Promise<void> {
     currentState = 0;
   }
 
+  function writeUniformState(value: number): void {
+    const boundedValue = Number.isFinite(value) ? value : 0;
+    const nextState = uniformState(cellCount, boundedValue);
+    device.queue.writeBuffer(resources.stateA, 0, nextState);
+    device.queue.writeBuffer(resources.stateB, 0, nextState);
+    writeTargetSum(boundedValue * cellCount);
+    currentState = 0;
+    resetSumHistory();
+  }
+
   function resizeGrid(rawSize: number): void {
     const nextSize = Math.round(clamp(rawSize, MIN_GRID_SIZE, MAX_GRID_SIZE));
     if (nextSize === gridSize) {
@@ -985,6 +1096,81 @@ async function init(): Promise<void> {
     view.centerX = targetX - offset.x * newCellsVisible;
     view.centerY = targetY - offset.y * newCellsVisible;
     clampViewport();
+  }
+
+  function gridPointFromClient(clientX: number, clientY: number): { x: number; y: number } {
+    const offset = canvasOffsetFromClient(clientX, clientY);
+    const cellsVisible = gridSize / view.zoom;
+    return {
+      x: Math.floor(view.centerX + offset.x * cellsVisible),
+      y: Math.floor(view.centerY + offset.y * cellsVisible),
+    };
+  }
+
+  function wrappedSegments(start: number, length: number, size: number): Array<{ start: number; length: number }> {
+    const boundedLength = Math.min(Math.max(Math.round(length), 1), size);
+    if (boundedLength >= size) {
+      return [{ start: 0, length: size }];
+    }
+
+    const normalizedStart = wrapNumber(Math.floor(start), size);
+    if (normalizedStart + boundedLength <= size) {
+      return [{ start: normalizedStart, length: boundedLength }];
+    }
+
+    const firstLength = size - normalizedStart;
+    return [
+      { start: normalizedStart, length: firstLength },
+      { start: 0, length: boundedLength - firstLength },
+    ];
+  }
+
+  function paintAtGridPoint(gridX: number, gridY: number): void {
+    const radius = Math.min(Math.max(1, Math.round(cursorRadiusValue)), Math.floor(gridSize * 0.5));
+    const shape = getSelectedCursorShape();
+    const rowsByLength = new Map<number, Float32Array<ArrayBuffer>>();
+
+    function rowValues(length: number): Float32Array<ArrayBuffer> {
+      const existing = rowsByLength.get(length);
+      if (existing) {
+        return existing;
+      }
+
+      const values = new Float32Array(length);
+      values.fill(cursorPaintValue);
+      rowsByLength.set(length, values);
+      return values;
+    }
+
+    function writeRow(y: number, startX: number, length: number): void {
+      const row = wrapNumber(y, gridSize);
+      for (const xSegment of wrappedSegments(startX, length, gridSize)) {
+        const values = rowValues(xSegment.length);
+        const byteOffset = (row * gridSize + xSegment.start) * Float32Array.BYTES_PER_ELEMENT;
+        device.queue.writeBuffer(resources.stateA, byteOffset, values);
+        device.queue.writeBuffer(resources.stateB, byteOffset, values);
+      }
+    }
+
+    if (shape === "circle") {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        const halfWidth = Math.floor(Math.sqrt(radius * radius - dy * dy));
+        writeRow(gridY + dy, gridX - halfWidth, halfWidth * 2 + 1);
+      }
+      return;
+    }
+
+    const brushSize = Math.min(gridSize, radius * 2);
+    const startX = Math.floor(gridX - brushSize * 0.5);
+    const startY = Math.floor(gridY - brushSize * 0.5);
+    for (let dy = 0; dy < brushSize; dy += 1) {
+      writeRow(startY + dy, startX, brushSize);
+    }
+  }
+
+  function paintAtClientPoint(clientX: number, clientY: number): void {
+    const point = gridPointFromClient(clientX, clientY);
+    paintAtGridPoint(point.x, point.y);
   }
 
   function updateControls(): void {
@@ -1074,7 +1260,7 @@ async function init(): Promise<void> {
     renderUniformValues[4] = view.zoom;
     renderUniformValues[5] = now;
     renderUniformValues[6] = gridSize;
-    renderUniformValues[7] = 0;
+    renderUniformValues[7] = getSelectedColorMode() === "foreground" ? 1 : 0;
     device.queue.writeBuffer(renderUniformBuffer, 0, renderUniformValues);
 
     const encoder = device.createCommandEncoder({ label: "frame command encoder" });
@@ -1118,17 +1304,40 @@ async function init(): Promise<void> {
     requestAnimationFrame(stepFrame);
   }
 
-  let dragging = false;
+  let pointerMode: "pan" | "paint" | null = null;
   let previousPointer: { x: number; y: number } | null = null;
 
   canvas.addEventListener("pointerdown", (event) => {
-    dragging = true;
-    previousPointer = { x: event.clientX, y: event.clientY };
-    canvas.setPointerCapture(event.pointerId);
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointer events used in browser checks do not always register an active pointer.
+    }
+    if (event.shiftKey) {
+      pointerMode = "pan";
+      previousPointer = { x: event.clientX, y: event.clientY };
+      canvas.classList.add("is-panning");
+      return;
+    }
+
+    pointerMode = "paint";
+    previousPointer = null;
+    canvas.classList.add("is-painting");
+    paintAtClientPoint(event.clientX, event.clientY);
   });
 
   canvas.addEventListener("pointermove", (event) => {
-    if (!dragging || previousPointer === null) {
+    if (pointerMode === "paint") {
+      paintAtClientPoint(event.clientX, event.clientY);
+      return;
+    }
+
+    if (pointerMode !== "pan" || previousPointer === null) {
       return;
     }
 
@@ -1143,14 +1352,21 @@ async function init(): Promise<void> {
   });
 
   canvas.addEventListener("pointerup", (event) => {
-    dragging = false;
+    pointerMode = null;
     previousPointer = null;
-    canvas.releasePointerCapture(event.pointerId);
+    canvas.classList.remove("is-panning", "is-painting");
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
   });
 
-  canvas.addEventListener("pointercancel", () => {
-    dragging = false;
+  canvas.addEventListener("pointercancel", (event) => {
+    pointerMode = null;
     previousPointer = null;
+    canvas.classList.remove("is-panning", "is-painting");
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
   });
 
   canvas.addEventListener(
@@ -1239,12 +1455,18 @@ async function init(): Promise<void> {
   randomizeButton.addEventListener("click", randomizeAll);
   settingsRandomizeButton.addEventListener("click", randomizeAll);
   randomizeStateButton.addEventListener("click", randomizeStateOnly);
+  fillZerosButton.addEventListener("click", () => writeUniformState(0));
+  fillOnesButton.addEventListener("click", () => writeUniformState(1));
   for (const input of [verticalSymmetryInput, horizontalSymmetryInput, fullSymmetryInput]) {
     input.addEventListener("change", applyCurrentSymmetryToFilter);
   }
   for (const input of normalizationInputs) {
     input.addEventListener("change", applyCurrentNormalization);
   }
+  for (const input of activationInputs) {
+    input.addEventListener("change", writeComputeParams);
+  }
+  persistentPixelsInput.addEventListener("change", writeComputeParams);
   stepsInput.addEventListener("input", () => {
     stepExponent = Number(stepsInput.value);
     stepsPerFrame = 2 ** stepExponent;
@@ -1254,6 +1476,8 @@ async function init(): Promise<void> {
 
   gridWidthCell.append(gridWidthValueCell.element);
   gridHeightCell.append(gridHeightValueCell.element);
+  cursorRadiusCell.append(cursorRadiusValueCell.element);
+  cursorValueCell.append(cursorPaintValueCell.element);
   randomizeMinCell.append(minCell.element);
   randomizeMaxCell.append(maxCell.element);
   normalizationMagnitudeCell.append(normalizationCell.element);

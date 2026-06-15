@@ -66,6 +66,14 @@
           </div>
         </section>
 
+        <section class="settings-section" aria-label="State fill">
+          <h2>State</h2>
+          <div class="state-actions">
+            <button id="fill-zeros-button" type="button">Zeros</button>
+            <button id="fill-ones-button" type="button">Ones</button>
+          </div>
+        </section>
+
         <section class="settings-section" aria-label="Filter normalization">
           <h2>Normalize</h2>
           <div class="normalization-row">
@@ -90,6 +98,80 @@
             <label class="normalization-magnitude">
               <span>Magnitude</span>
               <span id="normalization-magnitude-cell"></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-label="Activation function">
+          <h2>Activation</h2>
+          <div class="segmented-control activation-control" role="radiogroup" aria-label="Activation function">
+            <label>
+              <input type="radio" name="activation" value="identity" />
+              <span>Identity</span>
+            </label>
+            <label>
+              <input type="radio" name="activation" value="tanh" checked />
+              <span>Tanh</span>
+            </label>
+            <label>
+              <input type="radio" name="activation" value="abs" />
+              <span>Abs</span>
+            </label>
+            <label>
+              <input type="radio" name="activation" value="sin" />
+              <span>Sin</span>
+            </label>
+            <label>
+              <input type="radio" name="activation" value="inverse-gaussian" />
+              <span>Inv Gauss</span>
+            </label>
+            <label>
+              <input type="radio" name="activation" value="gaussian" />
+              <span>Gaussian</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-label="Display style">
+          <h2>Display</h2>
+          <div class="display-options">
+            <div class="segmented-control color-control" role="radiogroup" aria-label="Color mode">
+              <label>
+                <input type="radio" name="color-mode" value="signed" checked />
+                <span>Signed</span>
+              </label>
+              <label>
+                <input type="radio" name="color-mode" value="foreground" />
+                <span>Foreground</span>
+              </label>
+            </div>
+            <label class="toggle-option">
+              <input id="persistent-pixels-input" type="checkbox" aria-label="Persistent pixels" />
+              <span>Persistent pixels</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-label="Cursor brush">
+          <h2>Cursor</h2>
+          <div class="segmented-control cursor-shape-control" role="radiogroup" aria-label="Cursor shape">
+            <label>
+              <input type="radio" name="cursor-shape" value="box" checked />
+              <span>Box</span>
+            </label>
+            <label>
+              <input type="radio" name="cursor-shape" value="circle" />
+              <span>Circle</span>
+            </label>
+          </div>
+          <div class="range-controls">
+            <label>
+              <span>Radius</span>
+              <span id="cursor-radius-cell"></span>
+            </label>
+            <label>
+              <span>Value</span>
+              <span id="cursor-value-cell"></span>
             </label>
           </div>
         </section>

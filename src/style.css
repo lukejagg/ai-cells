@@ -332,7 +332,14 @@ button:disabled {
   padding-top: 3px;
 }
 
-.settings-actions button {
+.state-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-actions button,
+.state-actions button {
   min-height: 38px;
 }
 
@@ -356,7 +363,8 @@ button:disabled {
 
 .symmetry-options,
 .range-controls,
-.normalization-row {
+.normalization-row,
+.display-options {
   display: grid;
   gap: 8px;
 }
@@ -378,6 +386,18 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
+}
+
+.activation-control {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.color-control {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cursor-shape-control {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .segmented-control label {
@@ -412,7 +432,8 @@ button:disabled {
 
 .symmetry-options label,
 .range-controls label,
-.normalization-magnitude {
+.normalization-magnitude,
+.toggle-option {
   gap: 4px;
   color: var(--muted-foreground);
   font-size: 12px;
@@ -427,6 +448,13 @@ button:disabled {
   white-space: nowrap;
 }
 
+.toggle-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
 .range-controls label {
   display: grid;
 }
@@ -435,7 +463,8 @@ button:disabled {
   display: grid;
 }
 
-.symmetry-options input {
+.symmetry-options input,
+.toggle-option input {
   accent-color: var(--accent);
 }
 
@@ -525,11 +554,12 @@ canvas {
   display: block;
   width: 100%;
   height: 100%;
-  cursor: grab;
+  cursor: crosshair;
   touch-action: none;
 }
 
-canvas:active {
+canvas.is-panning,
+canvas.is-panning:active {
   cursor: grabbing;
 }
 
@@ -636,5 +666,9 @@ canvas:active {
 
   .normalization-row {
     grid-template-columns: 1fr;
+  }
+
+  .activation-control {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
