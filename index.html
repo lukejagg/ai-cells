@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cells Web</title>
+  </head>
+  <body>
+    <main id="app">
+      <header class="toolbar">
+        <div class="toolbar-shell" aria-label="Simulation controls">
+          <label class="step-control">
+            <span>Steps</span>
+            <input id="steps-input" type="range" min="1" max="64" step="1" value="1" />
+            <output id="steps-output">1</output>
+          </label>
+
+          <section class="toolbar-actions" aria-label="Controls">
+            <button id="settings-button" type="button" aria-expanded="false" aria-controls="settings-panel">
+              Settings
+            </button>
+            <button id="randomize-button" type="button">Randomize</button>
+            <button id="pause-button" class="icon-button" type="button" aria-label="Pause"></button>
+          </section>
+        </div>
+      </header>
+
+      <section id="settings-panel" class="settings-panel" hidden>
+        <section class="settings-section" aria-label="Grid size">
+          <h2>Size</h2>
+          <div class="range-controls">
+            <label>
+              <span>Width</span>
+              <span id="grid-width-cell"></span>
+            </label>
+            <label>
+              <span>Height</span>
+              <span id="grid-height-cell"></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-label="Filter normalization">
+          <h2>Normalize</h2>
+          <div class="normalization-row">
+            <div class="segmented-control" role="radiogroup" aria-label="Filter normalization">
+              <label>
+                <input type="radio" name="normalization" value="none" checked />
+                <span>None</span>
+              </label>
+              <label>
+                <input type="radio" name="normalization" value="sum" />
+                <span>Sum</span>
+              </label>
+              <label>
+                <input type="radio" name="normalization" value="l1" />
+                <span>L1</span>
+              </label>
+              <label>
+                <input type="radio" name="normalization" value="l2" />
+                <span>L2</span>
+              </label>
+            </div>
+            <label class="normalization-magnitude">
+              <span>Magnitude</span>
+              <span id="normalization-magnitude-cell"></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-label="Randomize range">
+          <h2>Range</h2>
+          <div class="range-controls">
+            <label>
+              <span>Min</span>
+              <span id="randomize-min-cell"></span>
+            </label>
+            <label>
+              <span>Max</span>
+              <span id="randomize-max-cell"></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-label="Filter symmetry">
+          <h2>Symmetry</h2>
+          <div class="symmetry-options">
+            <label>
+              <input id="vertical-symmetry-input" type="checkbox" aria-label="Vertical symmetry" checked />
+              <span>Vertical</span>
+            </label>
+            <label>
+              <input id="horizontal-symmetry-input" type="checkbox" aria-label="Horizontal symmetry" checked />
+              <span>Horizontal</span>
+            </label>
+            <label>
+              <input id="full-symmetry-input" type="checkbox" aria-label="Full symmetry" />
+              <span>Full</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-label="Convolution filter">
+          <h2>Filter</h2>
+          <div id="settings-filter-grid" class="settings-filter-grid" aria-label="Editable filter values"></div>
+        </section>
+      </section>
+
+      <section class="stage" aria-label="Automata canvas">
+        <canvas id="automata-canvas"></canvas>
+        <div id="error-panel" class="error-panel" hidden></div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

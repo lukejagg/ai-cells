@@ -1,0 +1,464 @@
+:root {
+  --background: #2a2827;
+  --foreground: #f4f2f0;
+  --card: #322f2e;
+  --card-foreground: #f4f2f0;
+  --muted: #3b3836;
+  --muted-foreground: #a39d99;
+  --border: rgba(244, 242, 240, 0.14);
+  --border-strong: rgba(244, 242, 240, 0.24);
+  --input: rgba(244, 242, 240, 0.08);
+  --input-strong: rgba(244, 242, 240, 0.13);
+  --accent: #e4f222;
+  --accent-secondary: #deea2b;
+  --accent-foreground: #2e2e27;
+  --blue-accent: #68b8ff;
+  --destructive: #ff6b5f;
+  --radius: 0.625rem;
+  --font-sans: "Lausanne", Inter, Roboto, Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    "DejaVu Sans Mono", monospace;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  position: relative;
+  min-width: 320px;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.toolbar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 20;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.toolbar-shell {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 46px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(42, 40, 39, 0.94);
+  box-shadow:
+    0 14px 32px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(244, 242, 240, 0.06);
+  pointer-events: auto;
+}
+
+.step-control,
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 14px;
+  color: var(--muted-foreground);
+  background: var(--card);
+  box-shadow: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--border-strong);
+  color: var(--foreground);
+  background: var(--muted);
+  filter: none;
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+#settings-button[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+#randomize-button {
+  border-color: rgba(244, 242, 240, 0.3);
+  color: var(--accent-foreground);
+  background:
+    linear-gradient(180deg, var(--accent) 0%, var(--accent-secondary) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 0 0 1px rgba(228, 242, 34, 0.2);
+}
+
+#randomize-button:hover {
+  border-color: rgba(228, 242, 34, 0.68);
+  color: var(--accent-foreground);
+  filter: brightness(1.03);
+}
+
+button:disabled {
+  border-color: rgba(244, 242, 240, 0.12);
+  color: var(--muted-foreground);
+  background: rgba(244, 242, 240, 0.06);
+  cursor: not-allowed;
+}
+
+.step-control {
+  justify-self: stretch;
+  gap: 10px;
+  width: min(440px, 100%);
+  color: var(--muted-foreground);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.step-control input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.step-control output {
+  width: 28px;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.toolbar-actions {
+  position: relative;
+  gap: 8px;
+  justify-self: end;
+}
+
+.icon-button {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 50%;
+  padding: 0;
+}
+
+.icon-button svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.settings-panel {
+  position: absolute;
+  top: 56px;
+  right: 8px;
+  z-index: 19;
+  display: grid;
+  gap: 10px;
+  width: 430px;
+  max-height: calc(100dvh - 64px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--card);
+  box-shadow:
+    0 22px 48px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(244, 242, 240, 0.05);
+  pointer-events: auto;
+}
+
+.settings-panel[hidden] {
+  display: none;
+}
+
+.settings-section {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-section h2 {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.symmetry-options,
+.range-controls,
+.normalization-row {
+  display: grid;
+  gap: 8px;
+}
+
+.symmetry-options {
+  grid-template-columns: 1fr;
+}
+
+.range-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.normalization-row {
+  grid-template-columns: minmax(0, 1fr) 126px;
+  align-items: end;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.segmented-control label {
+  display: grid;
+}
+
+.segmented-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented-control span {
+  display: grid;
+  min-height: 34px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  background: var(--input);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.segmented-control input:checked + span {
+  border-color: rgba(228, 242, 34, 0.55);
+  color: var(--accent-foreground);
+  background:
+    linear-gradient(180deg, var(--accent) 0%, var(--accent-secondary) 100%);
+}
+
+.symmetry-options label,
+.range-controls label,
+.normalization-magnitude {
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.symmetry-options label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.range-controls label {
+  display: grid;
+}
+
+.normalization-magnitude {
+  display: grid;
+}
+
+.symmetry-options input {
+  accent-color: var(--accent);
+}
+
+.value-cell {
+  position: relative;
+  min-width: 0;
+  min-height: 36px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 7px;
+  color: var(--foreground);
+  background: var(--input);
+  box-shadow: none;
+  filter: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.value-cell:hover {
+  border-color: var(--border-strong);
+  filter: none;
+}
+
+.settings-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.settings-filter-grid .value-cell {
+  text-align: center;
+}
+
+.value-cell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(228, 242, 34, 0.22) 0%,
+      rgba(228, 242, 34, 0.22) var(--value-position, 50%),
+      transparent var(--value-position, 50%),
+      transparent 100%
+    );
+}
+
+.value-cell.negative::before {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(104, 184, 255, 0.24) 0%,
+      rgba(104, 184, 255, 0.24) var(--value-position, 50%),
+      transparent var(--value-position, 50%),
+      transparent 100%
+    );
+}
+
+.value-cell-value {
+  position: relative;
+  z-index: 1;
+}
+
+.value-cell.mirrored {
+  border-color: rgba(244, 242, 240, 0.08);
+  color: rgba(163, 157, 153, 0.62);
+  background: rgba(244, 242, 240, 0.05);
+  cursor: not-allowed;
+}
+
+.stage {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  background: var(--background);
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+canvas:active {
+  cursor: grabbing;
+}
+
+.error-panel {
+  position: absolute;
+  inset: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 107, 95, 0.55);
+  border-radius: var(--radius);
+  padding: 24px;
+  color: var(--foreground);
+  background: rgba(77, 35, 32, 0.92);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  text-align: center;
+}
+
+.error-panel[hidden] {
+  display: none;
+}
+
+@media (max-width: 620px) {
+  .toolbar {
+    padding: 8px;
+  }
+
+  .toolbar-shell {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    min-height: 46px;
+    padding: 5px 10px;
+  }
+
+  .step-control {
+    display: none;
+  }
+
+  button {
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .toolbar-actions {
+    justify-content: end;
+    justify-self: stretch;
+  }
+
+  .settings-panel {
+    position: absolute;
+    top: 56px;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: auto;
+    max-height: none;
+    margin: 0;
+    border-radius: 16px;
+  }
+
+  .normalization-row {
+    grid-template-columns: 1fr;
+  }
+}
